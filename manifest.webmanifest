@@ -1,0 +1,31 @@
+{
+  "name": "גיבור הכפל · ספיידר תיתוי",
+  "short_name": "גיבור הכפל",
+  "description": "משימות כפל וחילוק עם ספיידר תיתוי — דמות מקורית",
+  "start_url": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0b1026",
+  "theme_color": "#0b1026",
+  "lang": "he",
+  "dir": "rtl",
+  "icons": [
+    {
+      "src": "./icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "./icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "./icons/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}
