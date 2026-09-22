@@ -1,12 +1,14 @@
 {
-  "name": "גיבור הכפל · ספיידר תיתוי",
-  "short_name": "גיבור הכפל",
-  "description": "משימות כפל וחילוק עם ספיידר תיתוי — דמות מקורית",
+  "name": "ספייר תיתוי · ספיידרמן נגד ונום",
+  "short_name": "ספייר תיתוי",
+  "description": "הרפתקת כפל וחילוק בעברית — 7 עולמות ו־46 משימות",
+  "id": "./",
   "start_url": "./",
+  "scope": "./",
   "display": "standalone",
   "orientation": "any",
-  "background_color": "#0b1026",
-  "theme_color": "#0b1026",
+  "background_color": "#060914",
+  "theme_color": "#060914",
   "lang": "he",
   "dir": "rtl",
   "icons": [
@@ -20,6 +22,12 @@
       "src": "./icons/icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "./icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
       "purpose": "any maskable"
     },
     {
