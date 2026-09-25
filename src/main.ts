@@ -21,7 +21,8 @@ try {
   paintError(error);
 }
 
-if ("serviceWorker" in navigator && location.protocol !== "file:") {
+const isLocalDevelopment = location.hostname === "localhost" || location.hostname === "127.0.0.1";
+if (!isLocalDevelopment && "serviceWorker" in navigator && location.protocol !== "file:") {
   window.addEventListener("load", () => {
     void navigator.serviceWorker.register("./sw.js").catch(() => {
       // The game remains playable online if registration is blocked.

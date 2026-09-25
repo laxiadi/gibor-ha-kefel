@@ -1,8 +1,31 @@
 export type Difficulty = "easy" | "medium" | "hard";
 export type Operation = "mul" | "div" | "mixed";
-export type AnswerMode = "numpad" | "choices";
 export type Theme = "webs" | "towers" | "fortress" | "storm" | "caves" | "neon" | "shadow";
 export type Suit = "classic" | "future" | "stealth" | "venom";
+export type GearSlot = "head" | "chest" | "wrists" | "back";
+export type GearId =
+  | "spider-visor"
+  | "shadow-hood"
+  | "hero-emblem"
+  | "nano-armor"
+  | "web-blasters"
+  | "holo-gauntlets"
+  | "web-wings"
+  | "bionic-arms"
+  | "spider-sense-crown"
+  | "noir-goggles"
+  | "multiverse-headphones"
+  | "web-cape"
+  | "symbiote-crest"
+  | "dimension-jacket"
+  | "electric-cuffs"
+  | "impact-gauntlets"
+  | "camouflage-cuffs"
+  | "spider-drone-pack"
+  | "glider-cloak"
+  | "portal-pack";
+
+export type EquippedGear = Partial<Record<GearSlot, GearId>>;
 
 export interface DifficultyConfig {
   hearts: number;
@@ -55,13 +78,14 @@ export interface Settings {
   slowMode: boolean;
   reduceMotion: boolean;
   difficulty: Difficulty;
-  answerMode: AnswerMode;
 }
 
 export interface GameState {
-  version: 4;
+  version: 6;
   playerName: string;
   nameAsked: boolean;
+  /** Base64 selfie shown under the mask. Device-only: never travels in a recovery code. */
+  facePhoto: string | null;
   silk: number;
   lifetimeSilk: number;
   facts: Record<string, FactStats>;
@@ -71,6 +95,8 @@ export interface GameState {
   pantry: Record<string, number>;
   inventory: Record<string, { owned: boolean; variants: string[] }>;
   equipped: Record<string, string | null>;
+  ownedGear: GearId[];
+  equippedGear: EquippedGear;
   unlockedSuits: Suit[];
   activeSuit: Suit;
   opMode: Operation;
@@ -87,7 +113,6 @@ export interface Question {
   answer: number;
   prompt: string;
   factKey: string;
-  choices: number[];
 }
 
 export interface Session {
@@ -113,6 +138,7 @@ export interface Session {
   totalDeadline?: number;
   timer?: number;
   question: Question;
+  recentKeys: string[];
   misses: string[];
   snackUses: number;
   maxSnackUses: number;

@@ -1,6 +1,7 @@
 import { sounds } from "../audio/sound";
-import { DIFFICULTIES, DIFFICULTY_LABELS, SNACKS, SUITS } from "../config/game";
+import { DIFFICULTIES, DIFFICULTY_LABELS, GEAR, SNACKS, SUITS } from "../config/game";
 import { WORLDS, getStage } from "../config/worlds";
+import { WebPhysics } from "../effects/WebPhysics";
 import {
   computeStars,
   createSession,
@@ -8,15 +9,18 @@ import {
   isStageUnlocked,
   makeQuestion,
   mastery,
+  RECENT_MEMORY,
   recordFact,
   speedScore,
   weakFactKeys,
 } from "../game/engine";
+import { openFaceCapture } from "../media/faceCapture";
 import { heroSvg, worldBackground } from "../render/art";
 import { clearSave, exportSave, importSave, isStorageBlocked, loadState, saveState } from "../state/store";
-import type { GameState, Operation, Session, Suit, World } from "../state/types";
+import type { GameState, GearId, GearSlot, Operation, Session, Suit, World } from "../state/types";
 
 type Screen = "home" | "map" | "play" | "wardrobe" | "mastery" | "stats" | "tutorial" | "result";
+type GearFilter = "all" | GearSlot;
 
 interface Result {
   stars: number;
@@ -47,13 +51,18 @@ export class App {
   private numpadValue = "";
   private feedback = "";
   private feedbackGood = false;
+  private gearFilter: GearFilter = "all";
+  private previewGear: GearId | null = null;
+  private readonly webPhysics: WebPhysics;
 
   constructor(private readonly root: HTMLElement) {
+    this.webPhysics = new WebPhysics();
     sounds.muted = this.state.settings.mute;
     if (matchMedia("(prefers-reduced-motion: reduce)").matches) this.state.settings.reduceMotion = true;
     const last = this.state.lastStageId ? getStage(this.state.lastStageId) : undefined;
     if (last) this.worldIndex = Math.max(0, WORLDS.findIndex((world) => world.id === last.worldId));
     this.root.addEventListener("click", (event) => this.handleClick(event));
+    this.root.addEventListener("pointerdown", (event) => this.handleWebPointer(event));
     window.addEventListener("keydown", (event) => this.handleKey(event));
     document.addEventListener("visibilitychange", () => this.updateTimer());
     this.render();
@@ -65,6 +74,7 @@ export class App {
 
   private go(screen: Screen): void {
     this.clearTimer();
+    this.webPhysics.cancel();
     this.screen = screen;
     this.feedback = "";
     this.render();
@@ -124,7 +134,7 @@ export class App {
       <section class="home-hero">
         <div class="title-lockup">
           <div class="brand-kicker"><span></span> הרפתקת החשבון של ספיידרמן <span></span></div>
-          <h1><span>ספייר</span> תיתוי</h1>
+          <h1><span>ספיידר</span> תיתוי</h1>
           <p class="hero-subtitle">מתקדמים. מתחזקים. מצילים את העיר.</p>
           <div class="welcome-card">
             <span class="avatar-dot">🕷️</span>
@@ -136,18 +146,19 @@ export class App {
             ${resume}
           </div>
         </div>
-        <div class="hero-wrap">
+        <button class="hero-wrap" data-action="hero-web" aria-label="יריית קור מהגיבור">
           <div class="hero-badge">7 עולמות<br><strong>46</strong> משימות</div>
           <div class="hero-speed-lines" aria-hidden="true"></div>
-          ${heroSvg(this.state.activeSuit, "idle")}
+          ${heroSvg(this.state.activeSuit, "idle", this.state.equippedGear, this.state.facePhoto)}
+          <span class="hero-touch-hint">לחצו וגררו קור אל העיר!</span>
           <div class="hero-platform"><span></span></div>
-        </div>
+        </button>
       </section>
       ${isStorageBlocked() ? '<p class="alert" role="status">השמירה חסומה במכשיר הזה. ההתקדמות תישמר רק עד סגירת הלשונית.</p>' : ""}
       <section class="control-deck">
       <div class="difficulty" aria-label="רמת קושי">
         <span class="control-label">רמת משימה</span>
-        ${(["easy", "medium", "hard"] as const).map((difficulty) => `<button class="pill ${this.state.settings.difficulty === difficulty ? "active" : ""}" data-action="difficulty" data-value="${difficulty}">${DIFFICULTY_LABELS[difficulty]}</button>`).join("")}
+        ${(["easy", "medium", "hard"] as const).map((difficulty) => `<button class="pill ${this.state.settings.difficulty === difficulty ? "active" : ""}" data-action="difficulty" data-value="${difficulty}">${DIFFICULTY_LABELS[difficulty]} · ${difficulty === "easy" ? 30 : difficulty === "medium" ? 25 : 18} שנ׳</button>`).join("")}
       </div>
       <p class="healthy-note">משימה אחת נמשכת 3–5 דקות. גם סיבוב קצר מחזק את המוח.</p>
       </section>
@@ -155,7 +166,7 @@ export class App {
         <button class="btn nav-card map-card" data-action="map"><b>🗺️</b><span>מפת העולמות</span><small>הסיפור הראשי</small></button>
         <button class="btn nav-card power-card" data-action="weak"><b>🎯</b><span>אימון חכם</span><small>בדיוק מה שצריך לחזק</small></button>
         <button class="btn nav-card city-card" data-action="city"><b>⚡</b><span>אתגר העיר</span><small>50 שניות של אקשן</small></button>
-        <button class="btn nav-card suit-card-home" data-action="wardrobe"><b>🕷️</b><span>ארון החליפות</span><small>${this.state.unlockedSuits.length}/4 נפתחו</small></button>
+        <button class="btn nav-card suit-card-home" data-action="wardrobe"><b>🦾</b><span>חנות וארון גיבורים</span><small>${this.state.ownedGear.length}/${GEAR.length} פריטי ציוד</small></button>
         <button class="btn nav-card" data-action="practice"><b>×÷</b><span>תרגול מעורב</span><small>כפל וחילוק</small></button>
         <button class="btn nav-card" data-action="mastery"><b>🏆</b><span>מפת השליטה</span><small>${goldFacts}/144 עובדות חזקות</small></button>
         <button class="btn nav-card secondary-nav" data-action="stats"><span>סטטיסטיקה ושמירה</span></button>
@@ -164,8 +175,7 @@ export class App {
       <section class="settings">
         <button class="pill" data-action="practice-mul">כפל בלבד</button>
         <button class="pill" data-action="practice-div">חילוק בלבד</button>
-        <button class="pill ${this.state.settings.answerMode === "numpad" ? "active" : ""}" data-action="answer-mode" data-value="numpad">הקלדת תשובה</button>
-        <button class="pill ${this.state.settings.answerMode === "choices" ? "active" : ""}" data-action="answer-mode" data-value="choices">בחירה מרובה</button>
+        <span class="typed-only-note">⌨️ כל תשובה מקלידים בעצמכם</span>
         <button class="pill ${this.state.settings.slowMode ? "active" : ""}" data-action="slow">מצב רגוע</button>
         <button class="pill ${this.state.settings.reduceMotion ? "active" : ""}" data-action="motion">פחות תנועה</button>
       </section>
@@ -224,7 +234,7 @@ export class App {
         ${hint}
       </section>
       <div id="feedback" class="feedback ${this.feedbackGood ? "good" : "bad"}" role="status" aria-live="polite">${this.feedback}</div>
-      ${this.state.settings.answerMode === "choices" ? this.viewChoices() : this.viewNumpad()}
+      ${this.viewNumpad()}
       <section class="snack-bar" aria-label="חטיפים">
         ${SNACKS.map((snack) => `<button data-action="snack" data-value="${snack.id}" ${(this.state.pantry[snack.id] ?? 0) <= 0 || session.snackUses >= session.maxSnackUses ? "disabled" : ""} aria-label="${snack.name}: ${snack.description}">
           <span>${snack.glyph}</span><small>×${this.state.pantry[snack.id] ?? 0}</small>
@@ -242,27 +252,93 @@ export class App {
     </section>`;
   }
 
-  private viewChoices(): string {
-    return `<section class="choices">${this.session!.question.choices.map((choice) => `<button data-action="choice" data-value="${choice}" aria-label="תשובה ${choice}">${choice}</button>`).join("")}</section>`;
-  }
-
   private viewWardrobe(): string {
+    const ownedCount = this.state.ownedGear.length;
+    const filteredGear = this.gearFilter === "all" ? GEAR : GEAR.filter((item) => item.slot === this.gearFilter);
+    const previewItem = this.previewGear ? GEAR.find((item) => item.id === this.previewGear) : undefined;
+    const previewEquipment = { ...this.state.equippedGear };
+    if (previewItem) previewEquipment[previewItem.slot] = previewItem.id;
+    const slotLabels: Array<[GearFilter, string, string]> = [
+      ["all", "הכול", "✨"],
+      ["head", "ראש", "🥽"],
+      ["chest", "חזה", "🛡️"],
+      ["wrists", "ידיים", "🕸️"],
+      ["back", "גב", "🦾"],
+    ];
     return this.shell(`
-      <header class="screen-header"><button class="back" data-action="home">חזרה</button><div><p class="eyebrow">🕸️ ${this.state.silk}</p><h1>ארון החליפות</h1><p>החליפו מראה וקבלו תגובות ואפקטים חדשים.</p></div></header>
-      <section class="wardrobe-preview">${heroSvg(this.state.activeSuit, "victory")}</section>
-      <section class="suit-grid">${SUITS.map((suit) => {
-        const unlocked = this.state.unlockedSuits.includes(suit.id);
-        const canBuy = !unlocked && suit.cost > 0 && this.state.silk >= suit.cost;
-        return `<article class="suit-card ${this.state.activeSuit === suit.id ? "active" : ""}">
-          <div class="mini-hero">${heroSvg(suit.id)}</div>
-          <h2>${suit.name}</h2><p>${suit.description}</p>
-          ${unlocked
-            ? `<button class="btn" data-action="equip-suit" data-value="${suit.id}">${this.state.activeSuit === suit.id ? "לבוש עכשיו" : "לבש"}</button>`
-            : suit.id === "venom"
-              ? '<span class="locked-label">🔒 הביסו את ונום</span>'
-              : `<button class="btn" data-action="buy-suit" data-value="${suit.id}" ${canBuy ? "" : "disabled"}>קנה ב־${suit.cost} קורים</button>`}
-        </article>`;
-      }).join("")}</section>
+      <header class="screen-header"><button class="back" data-action="home">חזרה</button><div><p class="eyebrow">🕸️ ${this.state.silk} קורים זמינים</p><h1>חנות וארון גיבורים</h1><p>משלימים משימות, חוסכים קורים ובונים גיבור ייחודי.</p></div><span class="world-count">${ownedCount}/${GEAR.length} ציוד</span></header>
+      <section class="wardrobe-studio">
+        <aside class="dressing-room">
+          <div class="dressing-title"><span>תא הלבשה</span><strong>${previewItem ? `תצוגה: ${previewItem.name}` : "הגיבור שלי"}</strong></div>
+          <div class="wardrobe-preview ${previewItem ? "previewing" : ""}">
+            ${heroSvg(this.state.activeSuit, "victory", previewEquipment, this.state.facePhoto)}
+          </div>
+          ${previewItem && !this.state.ownedGear.includes(previewItem.id) ? '<p class="preview-note">תצוגה בלבד — הפריט עדיין לא נרכש</p>' : ""}
+          <div class="equipped-slots">
+            ${(["head", "chest", "wrists", "back"] as GearSlot[]).map((slot) => {
+              const id = this.state.equippedGear[slot];
+              const item = GEAR.find((candidate) => candidate.id === id);
+              return `<button class="${item ? "filled" : ""}" ${item ? `data-action="equip-gear" data-value="${item.id}"` : "disabled"}>
+                <span>${item?.glyph ?? "＋"}</span><small>${this.slotLabel(slot)}</small><strong>${item?.name ?? "ריק"}</strong>${item ? "<i>×</i>" : ""}
+              </button>`;
+            }).join("")}
+          </div>
+          <div class="face-control">
+            <div class="face-control-copy">
+              <strong>${this.state.facePhoto ? "הפנים שלך מתחת למסכה" : "שימו את הפנים שלכם על הגיבור"}</strong>
+              <small>${this.state.facePhoto ? "התמונה נשמרת רק במכשיר הזה." : "המסכה תיפתח, יישארו רק המסגרת והעיניים."}</small>
+            </div>
+            <div class="face-control-actions">
+              <button class="btn" data-action="face-photo">📸 ${this.state.facePhoto ? "צילום חדש" : "צילום פנים"}</button>
+              ${this.state.facePhoto ? '<button class="btn danger" data-action="face-clear">הסרה</button>' : ""}
+            </div>
+          </div>
+          <p class="equipped-summary"><strong>לבוש עכשיו</strong><span>${this.equippedGearNames()}</span></p>
+          ${previewItem ? '<button class="btn clear-preview" data-action="clear-gear-preview">חזרה לציוד שלי</button>' : ""}
+        </aside>
+        <div class="store-browser">
+          <section class="suit-shop">
+            <div class="store-section-title"><div><span>שלב 1</span><h2>בחרו חליפה</h2></div><small>${this.state.unlockedSuits.length}/${SUITS.length} פתוחות</small></div>
+            <div class="suit-strip">${SUITS.map((suit) => {
+              const unlocked = this.state.unlockedSuits.includes(suit.id);
+              const canBuy = !unlocked && suit.cost > 0 && this.state.silk >= suit.cost;
+              return `<article class="suit-choice ${this.state.activeSuit === suit.id ? "active" : ""}">
+                <div class="mini-hero">${heroSvg(suit.id, "idle", {}, this.state.facePhoto)}</div>
+                <div><h3>${suit.name}</h3><p>${suit.description}</p></div>
+                ${unlocked
+                  ? `<button class="btn" data-action="equip-suit" data-value="${suit.id}">${this.state.activeSuit === suit.id ? "✓ לבוש" : "לבש"}</button>`
+                  : suit.id === "venom"
+                    ? '<span class="locked-label">🔒 הביסו את ונום</span>'
+                    : `<button class="btn" data-action="buy-suit" data-value="${suit.id}" ${canBuy ? "" : "disabled"}>🕸️ ${suit.cost}</button>`}
+              </article>`;
+            }).join("")}</div>
+          </section>
+          <section class="gear-shop">
+            <div class="store-section-title"><div><span>שלב 2</span><h2>בחרו ציוד</h2></div><small>פריט אחד בכל אזור</small></div>
+            <nav class="gear-filters" aria-label="סינון ציוד">
+              ${slotLabels.map(([id, label, glyph]) => `<button class="${this.gearFilter === id ? "active" : ""}" data-action="gear-filter" data-value="${id}"><b>${glyph}</b><span>${label}</span><small>${id === "all" ? GEAR.length : GEAR.filter((item) => item.slot === id).length}</small></button>`).join("")}
+            </nav>
+            <div class="gear-grid">${filteredGear.map((gear) => {
+              const owned = this.state.ownedGear.includes(gear.id);
+              const equipped = this.state.equippedGear[gear.slot] === gear.id;
+              const affordable = this.state.silk >= gear.cost;
+              const selected = this.previewGear === gear.id;
+              return `<article class="gear-card rarity-${gear.rarity} ${equipped ? "equipped" : ""} ${selected ? "selected" : ""}">
+                <button class="gear-preview-button" data-action="preview-gear" data-value="${gear.id}" aria-label="הצג את ${gear.name} על הגיבור">
+                  <span class="gear-glyph">${gear.glyph}</span><small>לחצו לתצוגה</small>
+                </button>
+                <div class="gear-copy"><span class="rarity">${gear.rarity === "epic" ? "אפי" : gear.rarity === "rare" ? "נדיר" : "ציוד"}</span><h3>${gear.name}</h3><p>${gear.description}</p><span class="slot-badge">${this.slotLabel(gear.slot)}</span></div>
+                <div class="gear-actions">
+                  <button class="btn preview-action" data-action="preview-gear" data-value="${gear.id}">👁 תצוגה</button>
+                  ${owned
+                    ? `<button class="btn ${equipped ? "active" : ""}" data-action="equip-gear" data-value="${gear.id}">${equipped ? "✓ הסר" : "לבש"}</button>`
+                    : `<button class="btn buy-gear" data-action="buy-gear" data-value="${gear.id}" ${affordable ? "" : "disabled"}><span>קנייה</span><b>🕸️ ${gear.cost}</b></button>`}
+                </div>
+              </article>`;
+            }).join("")}</div>
+          </section>
+        </div>
+      </section>
     `);
   }
 
@@ -294,9 +370,10 @@ export class App {
         <article><strong>${this.state.highScores.overall}</strong><span>שיא ניקוד</span></article>
       </section>
       <section class="panel"><h2>כדאי לתרגל</h2><div class="fact-list">${weak.length ? weak.map((key) => `<button data-action="fact-practice" data-value="${key}">${key}</button>`).join("") : "<p>שחקו כמה סיבובים ונמצא מה לחזק.</p>"}</div></section>
-      <section class="panel save-tools"><h2>גיבוי ההתקדמות</h2>
-        <button class="btn" data-action="export">העתק קוד גיבוי</button>
-        <button class="btn" data-action="import">ייבא קוד גיבוי</button>
+      <section class="panel save-tools"><h2>קוד שחזור קצר</h2>
+        <p>10 תווים בלבד. שומר פתיחת שלבים, קורים, חליפות וציוד. נתוני תרגול מפורטים נשמרים אוטומטית במכשיר.</p>
+        <button class="btn" data-action="export">הצג והעתק קוד</button>
+        <button class="btn" data-action="import">הקלד קוד שחזור</button>
         <button class="btn danger" data-action="reset">איפוס מלא</button>
       </section>
     `);
@@ -306,10 +383,10 @@ export class App {
     return this.shell(`
       <header class="screen-header"><button class="back" data-action="home">חזרה</button><div><h1>איך משחקים?</h1></div></header>
       <section class="tutorial-grid">
-        <article><b>1</b><h2>פותרים מהר ומדויק</h2><p>הקלידו תשובה או בחרו מתוך ארבע אפשרויות. רצף תשובות מגדיל את הניקוד.</p></article>
+        <article><b>1</b><h2>פותרים בעצמכם</h2><p>מקלידים כל תשובה בלוח המספרים. רצף תשובות מדויקות מגדיל את הניקוד.</p></article>
         <article><b>2</b><h2>מתקדמים בין עולמות</h2><p>צריך שני כוכבים כדי לפתוח את המשימה הבאה. בכל עולם מחכה בוס.</p></article>
         <article><b>3</b><h2>משתמשים בכוחות</h2><p>חטיפים מוסיפים זמן, לב או רמז. השימוש מוגבל בכל משימה.</p></article>
-        <article><b>4</b><h2>פותחים חליפות</h2><p>אספו קורים, רכשו חליפות והביסו את ונום כדי להשיג את הסימביוט.</p></article>
+        <article><b>4</b><h2>בונים גיבור</h2><p>אספו קורים, קנו ציוד וחליפות והלבישו את הגיבור. הזרועות הביוניות הן פריט אפי לחיסכון ארוך.</p></article>
       </section>
       <button class="btn btn-primary" data-action="map">יוצאים למשימה</button>
     `);
@@ -328,7 +405,7 @@ export class App {
       <section class="result-card">
         <p class="eyebrow">${result.passed ? "העיר בטוחה" : "המשימה ממשיכה"}</p>
         <div class="result-stars">${"★".repeat(result.stars)}${"☆".repeat(3 - result.stars)}</div>
-        <div class="result-hero">${heroSvg(this.state.activeSuit, result.passed ? "victory" : "hurt")}</div>
+        <div class="result-hero">${heroSvg(this.state.activeSuit, result.passed ? "victory" : "hurt", this.state.equippedGear, this.state.facePhoto)}</div>
         <h1>${result.passed ? "משימה הושלמה!" : "עוד ניסיון אחד!"}</h1>
         <p class="growth-message">${accuracyMessage}</p>
         <div class="result-metrics"><span><b>${result.score}</b><small>ניקוד</small></span><span><b>+${result.silk}</b><small>קורים</small></span><span><b>${result.misses.length}</b><small>לחיזוק</small></span></div>
@@ -368,7 +445,6 @@ export class App {
       case "stats": this.go("stats"); break;
       case "tutorial": this.go("tutorial"); break;
       case "difficulty": this.state.settings.difficulty = value as GameState["settings"]["difficulty"]; this.persist(); this.render(); break;
-      case "answer-mode": this.state.settings.answerMode = value as GameState["settings"]["answerMode"]; this.persist(); this.render(); break;
       case "slow": this.state.settings.slowMode = !this.state.settings.slowMode; this.persist(); this.render(); break;
       case "motion": this.state.settings.reduceMotion = !this.state.settings.reduceMotion; this.persist(); this.render(); break;
       case "mute":
@@ -381,20 +457,33 @@ export class App {
       case "digit": if (this.numpadValue.length < 3) { this.numpadValue += value; this.updateDisplay(); } break;
       case "delete": this.numpadValue = this.numpadValue.slice(0, -1); this.updateDisplay(); break;
       case "submit": if (this.numpadValue) this.answer(Number(this.numpadValue)); break;
-      case "choice": this.answer(Number(value)); break;
       case "snack": this.useSnack(value); break;
       case "quit": this.session = null; this.go("map"); break;
       case "equip-suit": this.equipSuit(value as Suit); break;
       case "buy-suit": this.buySuit(value as Suit); break;
+      case "equip-gear": this.equipGear(value as GearId); break;
+      case "buy-gear": this.buyGear(value as GearId); break;
+      case "gear-filter": this.gearFilter = value as GearFilter; this.render(); break;
+      case "preview-gear": this.previewGear = value as GearId; this.render(); break;
+      case "clear-gear-preview": this.previewGear = null; this.render(); break;
+      case "face-photo": void this.captureFace(); break;
+      case "face-clear": this.state.facePhoto = null; this.persist(); this.render(); break;
+      case "hero-web": {
+        if ((event as MouseEvent).detail === 0) {
+          const hero = this.root.querySelector<HTMLElement>(".hero-wrap");
+          if (hero) this.webPhysics.fireFromKeyboard(hero);
+        }
+        break;
+      }
       case "again": this.restartLast(); break;
-      case "export": void navigator.clipboard?.writeText(exportSave(this.state)).then(() => alert("קוד הגיבוי הועתק."), () => prompt("העתיקו את קוד הגיבוי:", exportSave(this.state))); break;
+      case "export": this.exportProgress(); break;
       case "import": this.importProgress(); break;
       case "reset": this.resetProgress(); break;
     }
   }
 
   private handleKey(event: KeyboardEvent): void {
-    if (this.screen !== "play" || this.state.settings.answerMode !== "numpad") return;
+    if (this.screen !== "play") return;
     if (/^\d$/.test(event.key) && this.numpadValue.length < 3) this.numpadValue += event.key;
     else if (event.key === "Backspace") this.numpadValue = this.numpadValue.slice(0, -1);
     else if (event.key === "Enter" && this.numpadValue) this.answer(Number(this.numpadValue));
@@ -558,7 +647,9 @@ export class App {
       this.finishRound();
       return;
     }
-    session.question = makeQuestion(this.state, session.tables, session.operation, session.kind === "weak" ? weakFactKeys(this.state) : session.misses);
+    const preferred = session.kind === "weak" ? weakFactKeys(this.state) : [...new Set(session.misses)];
+    session.question = makeQuestion(this.state, session.tables, session.operation, preferred, session.recentKeys);
+    session.recentKeys = [session.question.factKey, ...session.recentKeys].slice(0, RECENT_MEMORY);
     session.attempts = 0;
     session.transitioning = false;
     session.questionStartedAt = performance.now();
@@ -718,6 +809,49 @@ export class App {
     this.render();
   }
 
+  private buyGear(id: GearId): void {
+    const item = GEAR.find((candidate) => candidate.id === id);
+    if (!item || this.state.ownedGear.includes(id) || this.state.silk < item.cost) return;
+    this.state.silk -= item.cost;
+    this.state.ownedGear.push(id);
+    this.state.equippedGear[item.slot] = id;
+    this.previewGear = null;
+    sounds.play("purchase");
+    this.persist();
+    this.render();
+  }
+
+  private equipGear(id: GearId): void {
+    const item = GEAR.find((candidate) => candidate.id === id);
+    if (!item || !this.state.ownedGear.includes(id)) return;
+    if (this.state.equippedGear[item.slot] === id) delete this.state.equippedGear[item.slot];
+    else this.state.equippedGear[item.slot] = id;
+    this.previewGear = null;
+    sounds.play(id === "bionic-arms" ? "unlock" : "web");
+    this.persist();
+    this.render();
+  }
+
+  private async captureFace(): Promise<void> {
+    const photo = await openFaceCapture();
+    if (!photo) return;
+    this.state.facePhoto = photo;
+    sounds.play("unlock");
+    this.persist();
+    this.render();
+  }
+
+  private slotLabel(slot: GearSlot): string {
+    return { head: "ראש", chest: "חזה", wrists: "פרקי יד", back: "גב" }[slot];
+  }
+
+  private equippedGearNames(): string {
+    const names = GEAR
+      .filter((item) => this.state.equippedGear[item.slot] === item.id)
+      .map((item) => item.name);
+    return names.length ? names.join(" · ") : "עדיין אין ציוד לבוש";
+  }
+
   private restartLast(): void {
     if (this.result?.stageId) this.startStage(this.result.stageId);
     else if (this.result?.mission.includes("חלשות")) this.startWeakPractice();
@@ -735,7 +869,7 @@ export class App {
       feedback.textContent = this.feedback;
       feedback.className = `feedback ${this.feedbackGood ? "good" : "bad"}`;
     }
-    this.root.querySelectorAll<HTMLButtonElement>(".numpad button, .choices button").forEach((button) => {
+    this.root.querySelectorAll<HTMLButtonElement>(".numpad button").forEach((button) => {
       button.disabled = true;
     });
   }
@@ -747,6 +881,16 @@ export class App {
     document.body.appendChild(shot);
     sounds.play("web");
     window.setTimeout(() => shot.remove(), 700);
+  }
+
+  private handleWebPointer(event: PointerEvent): void {
+    if (this.screen !== "home" || event.button !== 0) return;
+    const hero = (event.target as HTMLElement).closest<HTMLElement>(".hero-wrap");
+    if (!hero) return;
+    event.preventDefault();
+    sounds.startMusic();
+    sounds.play("web");
+    this.webPhysics.start(event, hero);
   }
 
   private openNameDialog(): void {
@@ -769,7 +913,7 @@ export class App {
   }
 
   private importProgress(): void {
-    const encoded = prompt("הדביקו את קוד הגיבוי:");
+    const encoded = prompt("הקלידו את קוד השחזור בן 10 התווים:");
     if (!encoded) return;
     try {
       this.state = importSave(encoded);
@@ -779,6 +923,12 @@ export class App {
     } catch {
       alert("קוד הגיבוי אינו תקין.");
     }
+  }
+
+  private exportProgress(): void {
+    const code = exportSave(this.state);
+    void navigator.clipboard?.writeText(code).catch(() => undefined);
+    prompt("קוד השחזור הועתק. שמרו אותו במקום בטוח:", code);
   }
 
   private resetProgress(): void {

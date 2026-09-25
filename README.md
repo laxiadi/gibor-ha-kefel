@@ -1,4 +1,4 @@
-# ספייר תיתוי
+# ספיידר תיתוי
 
 Hebrew RTL multiplication and division adventure with seven worlds, 46 stages, adaptive practice, four suits, snacks, procedural sound, and offline PWA support.
 
