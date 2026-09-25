@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ALL_STAGES, WORLDS } from "../config/worlds";
+import { mergeCloudProgress, rankingScore, rankingStats } from "../leaderboard/cloud";
 import { createDefaultState, exportSave, importSave, migrateState } from "../state/store";
 import { createSession, finishStage, isStageUnlocked, makeQuestion, RECENT_MEMORY, speedScore } from "./engine";
 
@@ -170,5 +171,33 @@ describe("question and scoring engine", () => {
       total: 8, hearts: 2, seconds: 9,
     });
     expect(hard.seconds).toBe(18);
+  });
+});
+
+describe("cloud leaderboard", () => {
+  it("raises ranking score for achievements and owned gear", () => {
+    const state = createDefaultState();
+    const initial = rankingScore(rankingStats(state));
+    state.worldProgress["W1-1"] = { stars: 3, cleared: true, attempts: 1, bestScore: 1200 };
+    state.ownedGear.push("bionic-arms");
+    state.unlockedSuits.push("future");
+    state.roundsCompleted = 4;
+    expect(rankingScore(rankingStats(state))).toBeGreaterThan(initial + 4000);
+  });
+
+  it("merges cloud achievements while keeping the device-only selfie", () => {
+    const local = createDefaultState();
+    local.facePhoto = "data:image/jpeg;base64,/9j/4AAQSkZJRg==";
+    local.ownedGear.push("web-blasters");
+    const cloud = createDefaultState();
+    cloud.facePhoto = null;
+    cloud.worldProgress["W1-1"] = { stars: 3, cleared: true, attempts: 2, bestScore: 900 };
+    cloud.unlockedSuits.push("future");
+
+    const merged = mergeCloudProgress(local, cloud);
+    expect(merged.facePhoto).toBe(local.facePhoto);
+    expect(merged.worldProgress["W1-1"]?.stars).toBe(3);
+    expect(merged.ownedGear).toContain("web-blasters");
+    expect(merged.unlockedSuits).toContain("future");
   });
 });

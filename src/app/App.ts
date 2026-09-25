@@ -14,12 +14,13 @@ import {
   speedScore,
   weakFactKeys,
 } from "../game/engine";
+import { CloudLeaderboard, rankingScore, rankingStats, type LeaderboardEntry } from "../leaderboard/cloud";
 import { openFaceCapture } from "../media/faceCapture";
 import { heroSvg, worldBackground } from "../render/art";
 import { clearSave, exportSave, importSave, isStorageBlocked, loadState, saveState } from "../state/store";
 import type { GameState, GearId, GearSlot, Operation, Session, Suit, World } from "../state/types";
 
-type Screen = "home" | "map" | "play" | "wardrobe" | "mastery" | "stats" | "tutorial" | "result";
+type Screen = "home" | "map" | "play" | "wardrobe" | "mastery" | "leaderboard" | "stats" | "tutorial" | "result";
 type GearFilter = "all" | GearSlot;
 
 interface Result {
@@ -53,6 +54,9 @@ export class App {
   private feedbackGood = false;
   private gearFilter: GearFilter = "all";
   private previewGear: GearId | null = null;
+  private leaderboard: LeaderboardEntry[] = [];
+  private leaderboardStatus: "idle" | "loading" | "ready" | "error" = "idle";
+  private readonly cloud = new CloudLeaderboard();
   private readonly webPhysics: WebPhysics;
 
   constructor(private readonly root: HTMLElement) {
@@ -66,10 +70,41 @@ export class App {
     window.addEventListener("keydown", (event) => this.handleKey(event));
     document.addEventListener("visibilitychange", () => this.updateTimer());
     this.render();
+    void this.initializeCloud();
   }
 
   private persist(): void {
     saveState(this.state);
+    this.cloud.scheduleSave(this.state);
+  }
+
+  private async initializeCloud(): Promise<void> {
+    if (!this.cloud.configured) return;
+    try {
+      this.state = await this.cloud.initialize(this.state);
+      saveState(this.state);
+      if (this.screen !== "play") this.render();
+    } catch {
+      this.leaderboardStatus = "error";
+    }
+  }
+
+  private async loadLeaderboard(): Promise<void> {
+    if (!this.cloud.configured) {
+      this.leaderboardStatus = "ready";
+      if (this.screen === "leaderboard") this.render();
+      return;
+    }
+    this.leaderboardStatus = "loading";
+    if (this.screen === "leaderboard") this.render();
+    try {
+      await this.cloud.save(this.state);
+      this.leaderboard = await this.cloud.topTen();
+      this.leaderboardStatus = "ready";
+    } catch {
+      this.leaderboardStatus = "error";
+    }
+    if (this.screen === "leaderboard") this.render();
   }
 
   private go(screen: Screen): void {
@@ -94,6 +129,7 @@ export class App {
       case "play": return this.viewPlay();
       case "wardrobe": return this.viewWardrobe();
       case "mastery": return this.viewMastery();
+      case "leaderboard": return this.viewLeaderboard();
       case "stats": return this.viewStats();
       case "tutorial": return this.viewTutorial();
       case "result": return this.viewResult();
@@ -169,6 +205,7 @@ export class App {
         <button class="btn nav-card suit-card-home" data-action="wardrobe"><b>🦾</b><span>חנות וארון גיבורים</span><small>${this.state.ownedGear.length}/${GEAR.length} פריטי ציוד</small></button>
         <button class="btn nav-card" data-action="practice"><b>×÷</b><span>תרגול מעורב</span><small>כפל וחילוק</small></button>
         <button class="btn nav-card" data-action="mastery"><b>🏆</b><span>מפת השליטה</span><small>${goldFacts}/144 עובדות חזקות</small></button>
+        <button class="btn nav-card leaderboard-card" data-action="leaderboard"><b>🥇</b><span>טבלת האלופים</span><small>מי בעשירייה הראשונה?</small></button>
         <button class="btn nav-card secondary-nav" data-action="stats"><span>סטטיסטיקה ושמירה</span></button>
         <button class="btn nav-card secondary-nav" data-action="tutorial"><span>איך משחקים?</span></button>
       </section>
@@ -357,6 +394,39 @@ export class App {
     `);
   }
 
+  private viewLeaderboard(): string {
+    const myStats = rankingStats(this.state);
+    const medals = ["🥇", "🥈", "🥉"];
+    const rows = this.leaderboard.map((entry) => `
+      <li class="leader-row ${entry.isMe ? "is-me" : ""}">
+        <span class="leader-rank">${medals[entry.rank - 1] ?? `#${entry.rank}`}</span>
+        <span class="leader-name">${escapeHtml(entry.nickname)}${entry.isMe ? "<small>זה אני</small>" : ""}</span>
+        <span class="leader-details"><small>⭐ ${entry.stars}</small><small>🦾 ${entry.gearCount}</small><small>🕷️ ${entry.suits}</small></span>
+        <strong>${entry.score.toLocaleString("he-IL")}</strong>
+      </li>`).join("");
+    const body = !this.cloud.configured
+      ? `<div class="leader-empty"><b>טבלת האלופים כמעט מוכנה</b><p>צריך לחבר את כתובת Supabase והמפתח הציבורי כדי שכל החברים יופיעו כאן.</p></div>`
+      : this.leaderboardStatus === "loading"
+        ? '<div class="leader-empty leader-loading"><b>טוענים את האלופים…</b></div>'
+        : this.leaderboardStatus === "error"
+          ? '<div class="leader-empty"><b>לא הצלחנו להתחבר כרגע</b><p>ההתקדמות במכשיר בטוחה. נסו שוב בעוד רגע.</p><button class="btn" data-action="leaderboard-refresh">ניסיון נוסף</button></div>'
+          : rows
+            ? `<ol class="leader-list">${rows}</ol>`
+            : '<div class="leader-empty"><b>היו הראשונים בטבלה!</b><p>מסיימים משימה והניקוד הראשון עולה לענן.</p></div>';
+
+    return this.shell(`
+      <header class="screen-header"><button class="back" data-action="home">חזרה</button><div><p class="eyebrow">תחרות ידידותית</p><h1>טבלת האלופים</h1><p>עשרת הגיבורים עם הניקוד המשוקלל הגבוה ביותר.</p></div><button class="icon-button leader-refresh" data-action="leaderboard-refresh" aria-label="רענון הטבלה">↻</button></header>
+      <section class="my-ranking-card">
+        <div><small>הניקוד שלי</small><strong>${rankingScore(myStats).toLocaleString("he-IL")}</strong></div>
+        <span>⭐ ${myStats.stars} כוכבים</span><span>🦾 ${myStats.gearCount} פריטים</span><span>🕷️ ${myStats.suits} חליפות</span>
+      </section>
+      <section class="leaderboard-panel">
+        ${body}
+      </section>
+      <p class="leaderboard-help">הניקוד כולל כוכבים, שלבים, שליטה בתרגילים, שיאים, סיבובים, חליפות ושווי הציוד. תמונות פנים לעולם לא עולות לענן.</p>
+    `);
+  }
+
   private viewStats(): string {
     const weak = weakFactKeys(this.state, 12);
     const seen = Object.values(this.state.facts).reduce((sum, item) => sum + item.seen, 0);
@@ -442,6 +512,8 @@ export class App {
       case "fact-practice": this.startFactPractice(value); break;
       case "wardrobe": this.go("wardrobe"); break;
       case "mastery": this.go("mastery"); break;
+      case "leaderboard": this.go("leaderboard"); void this.loadLeaderboard(); break;
+      case "leaderboard-refresh": void this.loadLeaderboard(); break;
       case "stats": this.go("stats"); break;
       case "tutorial": this.go("tutorial"); break;
       case "difficulty": this.state.settings.difficulty = value as GameState["settings"]["difficulty"]; this.persist(); this.render(); break;
@@ -894,6 +966,7 @@ export class App {
   }
 
   private openNameDialog(): void {
+    if (document.querySelector(".name-dialog")) return;
     const dialog = document.createElement("dialog");
     dialog.className = "name-dialog";
     dialog.setAttribute("aria-labelledby", "name-title");

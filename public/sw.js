@@ -1,4 +1,4 @@
-const CACHE = "spayer-titui-v5";
+const CACHE = "spider-titui-v7";
 const SHELL = ["./index.html", "./manifest.webmanifest", "./icons/icon.svg", "./icons/favicon.svg", "./icons/icon-192.png", "./icons/icon-512.png"];
 
 async function precache() {
